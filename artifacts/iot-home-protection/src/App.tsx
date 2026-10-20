@@ -6,13 +6,16 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Bell, Check, CheckCircle2, Plus,
   ChevronDown, CircleHelp, Clock3, DoorOpen, Filter, House, LockKeyhole, MoreHorizontal,
-  Router as RouterIcon, Search, Shield, ShieldAlert, ShieldCheck, Siren, SlidersHorizontal, Speaker,
+  Router as RouterIcon, ScanFace, Search, Shield, ShieldAlert, ShieldCheck, Siren, SlidersHorizontal, Speaker,
   Thermometer, Wifi, X,
 } from 'lucide-react';
 import {
   useLocation,
   Router as WouterRouter,
 } from 'wouter';
+import { FaceRecognitionPage } from '@/components/face-recognition-page';
+import { isFaceRecognitionDemoMode, recognizeFace } from '@/lib/face-recognition';
+import type { FaceRecognitionResult } from '@/components/face-recognition-page';
 
 const queryClient = new QueryClient();
 
@@ -69,7 +72,7 @@ function Home() {
   const [alertState, setAlertState] = useState('Active');
   const [eventState, setEventState] = useState('All events');
   const [toast, setToast] = useState('');
-  const activeNav = location === '/devices' ? 'Devices' : location === '/security-events' ? 'Security Events' : 'Overview';
+  const activeNav = location === '/devices' ? 'Devices' : location === '/security-events' ? 'Security Events' : location === '/face-recognition' ? 'AI Face Recognition' : 'Overview';
   const [showFilters, setShowFilters] = useState(false);
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [formError, setFormError] = useState('');
@@ -145,9 +148,23 @@ function Home() {
     setAlerts(current => current.map(a => a.id === id ? { ...a, [kind]: true, ...(kind === 'resolved' ? { acknowledged: true } : {}) } : a));
     notify(kind === 'resolved' ? 'Alert dismissed' : 'Alert acknowledged');
   }
+  function recordUnauthorizedFaceResult(result: FaceRecognitionResult) {
+    const modeLabel = result.source === 'demo' ? 'Simulated demo outcome' : 'Recognition service result';
+    setAlerts(current => [{
+      id: `face-${Date.now()}`,
+      severity: 'Critical',
+      title: result.source === 'demo' ? 'Face recognition demo: unauthorised preview' : 'Unauthorised face recognition result',
+      device: 'Face recognition',
+      description: `${modeLabel}. ${result.reason}`,
+      time: 'Just now',
+      resolved: false,
+      acknowledged: false,
+    }, ...current]);
+  }
   const navItems = [
     { title: 'Overview', icon: House }, { title: 'Devices', icon: Wifi, count: devices.length },
     { title: 'Security Events', icon: Bell, count: activeCount },
+    { title: 'AI Face Recognition', icon: ScanFace },
   ];
   const levelClass = (severity: string) => severity.toLowerCase();
 
@@ -165,7 +182,7 @@ function Home() {
         </div>
         <div className="nav-label">YOUR HOME</div>
         <nav className="side-nav" aria-label="Dashboard sections">
-          {navItems.map(({ title, icon: Icon, count }) => <button key={title} className={`nav-item ${activeNav === title ? 'selected' : ''}`} onClick={() => setLocation(title === 'Devices' ? '/devices' : title === 'Security Events' ? '/security-events' : '/')} data-testid={`nav-${title.toLowerCase().replaceAll(' ', '-')}`} aria-current={activeNav === title ? 'page' : undefined}>
+          {navItems.map(({ title, icon: Icon, count }) => <button key={title} className={`nav-item ${activeNav === title ? 'selected' : ''}`} onClick={() => setLocation(title === 'Devices' ? '/devices' : title === 'Security Events' ? '/security-events' : title === 'AI Face Recognition' ? '/face-recognition' : '/')} data-testid={`nav-${title.toLowerCase().replaceAll(' ', '-')}`} aria-current={activeNav === title ? 'page' : undefined}>
             <Icon size={17} strokeWidth={1.8} /><span>{title}</span>{count !== undefined && <span className="nav-count">{count}</span>}
           </button>)}
         </nav>
@@ -181,7 +198,7 @@ function Home() {
           <div className="topbar-actions"><span className="updated"><span className="live-dot" />Simulation data</span><button className="icon-button" aria-label="Open security events" onClick={() => setLocation('/security-events')} data-testid="button-notifications"><Bell size={18} /><i /></button><div className="top-avatar">JM</div></div>
         </header>
         <nav className="mobile-nav" aria-label="Dashboard sections">
-          {navItems.map(({ title, icon: Icon, count }) => <button key={title} className={activeNav === title ? 'current' : ''} onClick={() => setLocation(title === 'Devices' ? '/devices' : title === 'Security Events' ? '/security-events' : '/')} data-testid={`mobile-nav-${title.toLowerCase().replaceAll(' ', '-')}`} aria-current={activeNav === title ? 'page' : undefined}><Icon size={15} /><span>{title}</span>{count !== undefined && <i>{count}</i>}</button>)}
+          {navItems.map(({ title, icon: Icon, count }) => <button key={title} className={activeNav === title ? 'current' : ''} onClick={() => setLocation(title === 'Devices' ? '/devices' : title === 'Security Events' ? '/security-events' : title === 'AI Face Recognition' ? '/face-recognition' : '/')} data-testid={`mobile-nav-${title.toLowerCase().replaceAll(' ', '-')}`} aria-current={activeNav === title ? 'page' : undefined}><Icon size={15} /><span>{title}</span>{count !== undefined && <i>{count}</i>}</button>)}
         </nav>
 
         <div className="dashboard">
@@ -224,7 +241,12 @@ function Home() {
                 </div><span className="event-index">{String(index + 1).padStart(2, '0')}</span>
               </article>) : <div className="empty-state event-empty"><div className="empty-icon calm"><CheckCircle2 size={20} /></div><strong>{eventState === 'Resolved' ? 'No resolved events yet' : 'No events match'}</strong><span>Change the severity or event status filter.</span><button onClick={() => { setSeverityFilter('All severity'); setEventState('All events'); }} data-testid="button-reset-event-filters">Reset filters</button></div>}
             </div>
-          </section> : <>
+          </section> : activeNav === 'AI Face Recognition' ? <FaceRecognitionPage
+            demoMode={isFaceRecognitionDemoMode}
+            alerts={alerts.slice(0, 3)}
+            onAnalyze={recognizeFace}
+            onUnauthorized={recordUnauthorizedFaceResult}
+          /> : <>
           <section className="welcome-row">
             <div><div className="eyebrow"><span className="eyebrow-line" />{todayLabel}<span className="simulation-badge">SIMULATED DATA</span></div><h1>Your home, <em>in good hands.</em></h1><p className="welcome-sub">A clear view of what’s connected and what needs your attention.</p></div>
             <button className="secondary-button" onClick={() => notify('Sample dashboard values are up to date.')} data-testid="button-refresh"><Activity size={15} />Refresh sample <span className="refresh-time">· simulated</span></button>
@@ -249,6 +271,12 @@ function Home() {
               <div className="stat-divider" />
               <div className="posture-stat"><span>OPEN ALERTS</span><strong>{activeCount.toString().padStart(2, '0')}</strong><small className="amber"><AlertTriangle size={12} /> {highPriorityCount} high priority</small></div>
             </div>
+          </section>
+
+          <section className="face-feature-callout" aria-label="Face recognition feature">
+            <div className="face-feature-icon"><ScanFace size={19} /></div>
+            <div className="face-feature-copy"><span>OPTIONAL IDENTITY CHECK</span><h2>AI Face Recognition <i>PREVIEW</i></h2><p>Upload an image or use your camera to explore the face-recognition workflow. Demo results are not real identity checks.</p></div>
+            <button onClick={() => setLocation('/face-recognition')} data-testid="button-open-face-recognition"><ScanFace size={15} /> Open face recognition <span aria-hidden="true">→</span></button>
           </section>
 
           <div className="content-grid">
