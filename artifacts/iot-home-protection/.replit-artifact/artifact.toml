@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "IoT Home Protection System"
+description = "A cybersecurity dashboard for monitoring simulated smart-home devices, their trust status, and security alerts. This frontend uses mock data and does not require a backend."
+version = "1.0.0"
+id = "artifacts/iot-home-protection"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25607
+
+[services.development]
+run = "pnpm --filter @workspace/iot-home-protection run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/iot-home-protection", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/iot-home-protection/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25607"
+BASE_PATH = "/"
