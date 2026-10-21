@@ -60,7 +60,7 @@ app.use("/api", router);
 if (isProduction) {
   const frontendPath = path.resolve(
     process.cwd(),
-    "artifacts/iot-home-protection/dist",
+    "../../artifacts/iot-home-protection/dist/public",
   );
 
   app.use(express.static(frontendPath));
@@ -72,5 +72,6 @@ if (isProduction) {
     });
   });
 }
+```
 
 export default app;
