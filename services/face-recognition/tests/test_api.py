@@ -35,6 +35,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.json()
 
+    def enroll(self, **overrides):
+        payload = {
+            "name": "Demo Member",
+            "image_base64": png_base64(),
+            "consent_confirmed": True,
+        }
+        payload.update(overrides)
+        return self.client.post("/api/enroll", json=payload)
+
     @patch.object(service, "load_gallery", return_value=[])
     def test_health_does_not_return_a_similarity_score_or_threshold(self, _mock):
         body = self.client.get("/api/health").json()
@@ -136,6 +145,50 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(item["status"], "indeterminate")
         self.assertIsNone(item["matched"])
         self.assertNotIn("distance", item)
+
+    def test_enrollment_requires_explicit_consent(self):
+        response = self.enroll(consent_confirmed=False)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.client.get("/api/enrolled").json()["items"], [])
+
+    @patch.object(service.face_recognition, "face_encodings", return_value=[])
+    def test_enrollment_rejects_image_without_a_face(self, _mock):
+        response = self.enroll()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "no_face")
+        self.assertEqual(self.client.get("/api/enrolled").json()["items"], [])
+
+    @patch.object(service.face_recognition, "face_encodings", return_value=[np.zeros(128), np.ones(128)])
+    def test_enrollment_rejects_multiple_faces(self, _mock):
+        response = self.enroll()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "multiple_faces")
+        self.assertEqual(self.client.get("/api/enrolled").json()["items"], [])
+
+    @patch.object(service.face_recognition, "face_encodings", return_value=[np.zeros(128)])
+    def test_enrolled_face_can_be_found_by_recognition(self, _mock):
+        response = self.enroll(name="  Alice Demo  ")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "enrolled")
+        self.assertEqual(response.json()["identity"], "Alice Demo")
+        self.assertEqual(response.json()["sample_count"], 1)
+
+        recognized = self.recognize()
+        self.assertEqual(recognized["status"], "match")
+        self.assertEqual(recognized["identity"], "Alice Demo")
+        self.assertEqual(self.client.get("/api/enrolled").json()["items"][0]["name"], "Alice Demo")
+
+    def test_enrollment_rejects_blank_name(self):
+        response = self.enroll(name="   ")
+        self.assertEqual(response.status_code, 400)
+
+    @patch.object(service.face_recognition, "face_encodings", return_value=[np.zeros(128)])
+    def test_enrolled_person_can_be_removed(self, _mock):
+        self.assertEqual(self.enroll().json()["status"], "enrolled")
+        response = self.client.delete("/api/enrolled/Demo%20Member")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["deleted_samples"], 1)
+        self.assertEqual(self.client.get("/api/enrolled").json()["items"], [])
 
 
 if __name__ == "__main__":

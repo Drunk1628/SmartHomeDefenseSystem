@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import io
+import json
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -41,6 +42,11 @@ class Frame(BaseModel):
     image_base64: str = Field(description="Base64 encoded JPEG/PNG image bytes")
 
 
+class Enrollment(Frame):
+    name: str = Field(min_length=1, max_length=80)
+    consent_confirmed: bool = False
+
+
 def _db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -53,6 +59,13 @@ def _db() -> sqlite3.Connection:
         face_count INTEGER NOT NULL,
         status TEXT
     )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS enrolled_faces (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        encoding TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS enrolled_faces_name_idx ON enrolled_faces(name)")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(recognition_history)")}
     if "status" not in columns:
         conn.execute("ALTER TABLE recognition_history ADD COLUMN status TEXT")
@@ -73,9 +86,7 @@ def _db() -> sqlite3.Connection:
 def load_gallery() -> list[tuple[str, np.ndarray]]:
     """Encode every detectable face in each person's image files."""
     entries: list[tuple[str, np.ndarray]] = []
-    if not GALLERY.exists():
-        return entries
-    for path in sorted(GALLERY.rglob("*")):
+    for path in sorted(GALLERY.rglob("*")) if GALLERY.exists() else []:
         if not path.is_file() or path.suffix.lower() not in IMAGE_TYPES:
             continue
         name = path.parent.name.strip()
@@ -88,6 +99,16 @@ def load_gallery() -> list[tuple[str, np.ndarray]]:
                 entries.append((name, encodings[0]))
         except Exception:
             # A malformed or unsupported gallery file should not stop the API.
+            continue
+    # Newly enrolled faces are stored as feature vectors, not as uploaded photos.
+    with _db() as conn:
+        rows = conn.execute("SELECT name, encoding FROM enrolled_faces ORDER BY id").fetchall()
+    for row in rows:
+        try:
+            vector = np.asarray(json.loads(row["encoding"]), dtype=float)
+            if vector.shape == (128,) and np.isfinite(vector).all():
+                entries.append((row["name"], vector))
+        except (TypeError, ValueError, json.JSONDecodeError):
             continue
     return entries
 
@@ -140,6 +161,63 @@ def _result(status: str, face_count: int | None, identity: str | None = None) ->
 def health() -> dict[str, Any]:
     gallery = load_gallery()
     return {"status": "ok", "gallery_photos": len(gallery)}
+
+
+@app.post("/api/enroll")
+async def enroll(enrollment: Enrollment, request: Request) -> dict[str, Any]:
+    """Enroll one consenting person by saving only their face encoding."""
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_BYTES * 2:
+        raise HTTPException(413, "Request exceeds the image size limit")
+    name = enrollment.name.strip()
+    if not name:
+        raise HTTPException(400, "A non-empty name is required")
+    if not enrollment.consent_confirmed:
+        raise HTTPException(400, "Consent must be confirmed before enrollment")
+
+    image = _decode_image(enrollment.image_base64)
+    try:
+        faces = face_recognition.face_encodings(image)
+    except Exception:
+        return {"status": "indeterminate", "identity": None}
+    if not faces:
+        return {"status": "no_face", "identity": None}
+    if len(faces) > 1:
+        return {"status": "multiple_faces", "identity": None}
+
+    vector = np.asarray(faces[0], dtype=float)
+    if vector.shape != (128,) or not np.isfinite(vector).all():
+        return {"status": "indeterminate", "identity": None}
+
+    created_at = datetime.now(timezone.utc).isoformat()
+    with _db() as conn:
+        cur = conn.execute(
+            "INSERT INTO enrolled_faces(name, encoding, created_at) VALUES(?,?,?)",
+            (name, json.dumps(vector.tolist()), created_at),
+        )
+        person_id = int(cur.lastrowid)
+        sample_count = int(conn.execute(
+            "SELECT COUNT(*) FROM enrolled_faces WHERE name = ?", (name,)
+        ).fetchone()[0])
+    return {"status": "enrolled", "identity": name, "person_id": person_id, "sample_count": sample_count}
+
+
+@app.get("/api/enrolled")
+def enrolled_people() -> dict[str, Any]:
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT name, COUNT(*) AS sample_count, MIN(created_at) AS created_at "
+            "FROM enrolled_faces GROUP BY name ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+    return {"items": [dict(row) for row in rows]}
+
+
+@app.delete("/api/enrolled/{name}")
+def delete_enrolled_person(name: str) -> dict[str, Any]:
+    with _db() as conn:
+        cur = conn.execute("DELETE FROM enrolled_faces WHERE name = ?", (name,))
+        deleted_samples = cur.rowcount
+    return {"deleted_samples": deleted_samples, "identity": name}
 
 
 @app.post("/api/recognize")
