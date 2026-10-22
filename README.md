@@ -1,4 +1,4 @@
-# SmartHomeDefenseSystem
+# HEARTHGUARD
 This is the prototype for HEARTHGUARD, made for the Sime Darby Innovation Competition.
 
 To access the prototype, here's the link powered by Render. 
