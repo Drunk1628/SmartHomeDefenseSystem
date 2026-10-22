@@ -40,7 +40,9 @@ authRouter.post("/auth/register", async (req, res) => {
     const normalizedName = displayName.trim();
 
     if (!isValidEmail(normalizedEmail)) {
-      res.status(400).json({ error: "Please enter a valid email address." });
+      res.status(400).json({
+        error: "Please enter a valid email address.",
+      });
       return;
     }
 
@@ -65,38 +67,51 @@ authRouter.post("/auth/register", async (req, res) => {
       .limit(1);
 
     if (existingUser) {
-      res.status(409).json({ error: "An account with this email already exists." });
+      res.status(409).json({
+        error: "An account with this email already exists.",
+      });
       return;
     }
 
     const passwordHash = await argon2.hash(password);
 
-    const [newUser] = await db
-      .insert(users)
-      .values({
-        email: normalizedEmail,
-        passwordHash,
-        displayName: normalizedName,
-      })
-      .returning({
-        id: users.id,
-        email: users.email,
-        displayName: users.displayName,
-        accountStatus: users.accountStatus,
+    // Create the account and its home together.
+    const newUser = await db.transaction(async (tx) => {
+      const [createdUser] = await tx
+        .insert(users)
+        .values({
+          email: normalizedEmail,
+          passwordHash,
+          displayName: normalizedName,
+        })
+        .returning({
+          id: users.id,
+          email: users.email,
+          displayName: users.displayName,
+          accountStatus: users.accountStatus,
+        });
+
+      if (!createdUser) {
+        throw new Error("Unable to create account.");
+      }
+
+      await tx.insert(homes).values({
+        name: `${normalizedName.slice(0, 90)}'s Home`,
+        ownerUserId: createdUser.id,
       });
 
-    if (!newUser) {
-      res.status(500).json({ error: "Unable to create account." });
-      return;
-    }
+      return createdUser;
+    });
 
     res.status(201).json({
-      message: "Account created successfully. Please log in.",
+      message: "Account and home created successfully. Please log in.",
       user: publicUser(newUser),
     });
   } catch (error) {
     console.error("Registration failed:", error);
-    res.status(500).json({ error: "Unable to create account." });
+    res.status(500).json({
+      error: "Unable to create account.",
+    });
   }
 });
 
