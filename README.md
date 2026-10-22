@@ -1,6 +1,9 @@
 # HEARTHGUARD
 This is the prototype for HEARTHGUARD, made for the Sime Darby Innovation Competition.
 
+Currently, the prototype offers the complete implementation of a complete system of login/registration, zero trust/authentication/authorization security measures, database with hashing protocols to protect user passwords, and a complete frontend and backend with audit logs and threat simulation. We also have a separate Face Recognition model that focuses on user face recognition for extra security measures, although it is not integrated into the prototype website yet, the file and website frontend is attached in Github under the name SmartHomeDefenseSystem-FaceRecognition-Local.zip.
+
+
 To access the prototype, here's the link powered by Render. 
 https://smarthomedefensesystem.onrender.com/
 It should wake the server shortly after clicking into the link. 
